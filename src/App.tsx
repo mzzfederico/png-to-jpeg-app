@@ -1,60 +1,75 @@
 import "./App.css";
-import {useState} from "react";
+import {useEffect, useState} from "react";
 
 import {Label} from "@/components/ui/label.tsx";
-import {Input} from "@/components/ui/input.tsx";
 import {Slider} from "@/components/ui/slider.tsx";
-import {Separator} from "@/components/ui/separator.tsx";
 import {Avatar, AvatarFallback, AvatarImage} from "@/components/ui/avatar";
 import {Button} from "@/components/ui/button.tsx";
 
-import {invoke} from "@tauri-apps/api/tauri"
+import {invoke} from "@tauri-apps/api/tauri";
+import { listen } from '@tauri-apps/api/event';
+import { useToast } from "@/components/ui/use-toast";
+import {Toaster} from "@/components/ui/toaster.tsx";
 
-async function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
 
 function App() {
   const [quality, setQuality] = useState<number>(50);
-  const [dataSrc, setDataSrc] = useState<string | null>(null);
+  const [previewSrc, setPreviewSrc] = useState<string | null>(null);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [jpegSrc, setJpegSrc] = useState<string | null>(null);
 
-  async function handleImageInput(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (file) {
-      const base64 = await fileToBase64(file);
-      setDataSrc(base64);
+  const {toast} = useToast();
+
+  useEffect(() => {
+    listen<{ message: string }>('status', (e) => {
+      toast({variant: "default", title: e?.payload?.message ?? "Something happened."});
+    }).then()
+  }, []);
+
+  useEffect(() => {
+    listen<{ message: string }>('error', (e) => {
+      toast({variant: "destructive", title: e?.payload?.message ?? "Something went wrong."});
+    }).then()
+  }, []);
+
+  async function handleImageInput() {
+    try {
+      let [path, preview]: string = await invoke('open_image_dialog');
+      setPreviewSrc(preview);
+      setSelectedImage(path);
+    } catch (e: unknown) {
+      if (e instanceof Error) {
+        toast({ variant: "destructive", title: e?.message ?? "Something went wrong."});
+      }
+    }
+  }
+  async function convertToJPEG() {
+    if (!selectedImage) {
+      console.error('');toast({ variant: "destructive", title: "No image selected"});
+      return;
+    }
+    try {
+      let result: string = await invoke('convert_file_to_jpeg', {path: selectedImage, quality: quality});
+      setJpegSrc(result);
+    } catch (e: unknown) {
+      if (e instanceof Error) {
+        toast({ variant: "destructive", title: e?.message ?? "Something went wrong."});
+      }
     }
   }
 
-  async function convertToJPEG() {
-    if (!dataSrc) return;
-    let result: string = await invoke('convert_png_src_to_jpg_src', {dataSrc: dataSrc.split(',')[1], quality: quality});
-    console.log(result);
-    setJpegSrc(result);
-  }
-
   return (
-    <div className="container p-16 flex">
-      <div className="grid w-full items-center gap-6">
-        <div className="item">
-          <Label htmlFor="picture">Picture</Label>
-          <div className="flex gap-6">
-            <Input id="picture" type="file" onChange={handleImageInput}/>
-            <Avatar>
-              <AvatarImage src={dataSrc ?? ""} />
-              <AvatarFallback>n/a</AvatarFallback>
-            </Avatar>
-          </div>
+    <div className="container p-16 flex-col">
+      <div className="border-2 border-gray-200 rounded p-3 flex-col mb-6">
+        <div className="flex p-3 gap-6">
+          <Button onClick={handleImageInput}>Select input image</Button>
+          {!!previewSrc && <Avatar>
+            <AvatarImage src={previewSrc ?? ""}/>
+            <AvatarFallback>n/a</AvatarFallback>
+          </Avatar>}
         </div>
-
-        <div className="item">
-          <Label htmlFor="quality">Quality ({quality})</Label>
+        <div className="flex p-3 gap-6">
+          <Label htmlFor="quality">Quality</Label>
           <Slider
             defaultValue={[50]}
             max={100}
@@ -64,20 +79,16 @@ function App() {
               setQuality(value)
             }}
           />
+          {quality}
         </div>
-
-        <Separator/>
-
-        <div className="item">
-          <Button onClick={convertToJPEG}>Save as .jpg</Button>
+        <div className="flex p-3">
+          <Button disabled={!selectedImage} onClick={convertToJPEG}>Convert to JPEG</Button>
         </div>
-
-        {jpegSrc && (<div className="item">
-          <Label htmlFor="result">Result</Label>
-          <img src={jpegSrc} alt="Resulting image" className={'rounded'}/>
-        </div>)}
-
       </div>
+      {jpegSrc && (<div className="border-2 border-gray-200 rounded">
+        <img src={jpegSrc} alt="Resulting image" className={'rounded'}/>
+      </div>)}
+      <Toaster />
     </div>
   );
 }
